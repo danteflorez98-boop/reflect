@@ -106,7 +106,7 @@
 </section>
 
 <script>
-// Reflect v1 (15 Nov 2026). Talks only to the evening_reflection Edge Function; logic lives in
+// Reflect v1.1 (18 Nov 2026; v1 15 Nov). Talks only to the evening_reflection Edge Function; logic lives in
 // "Journal — Reflection Spec". Every answer goes to an outbox on this phone first (IndexedDB) and is sent in the
 // background, so nothing waits and nothing is lost offline. An item leaves the outbox only once the server says saved.
 const ENDPOINT = "https://lzgfhiwdxqtbbgnvnarm.supabase.co/functions/v1/evening_reflection";
@@ -135,36 +135,45 @@ const outboxAdd = (item) => tx("readwrite", (s) => s.add(item));
 const outboxAll = () => tx("readonly", (s) => s.getAll());
 const outboxDel = (n) => tx("readwrite", (s) => s.delete(n));
 
+// v1.1 (18 Nov): a failed or stuck item no longer blocks the rest; a session's "finish" waits until every
+// earlier answer from that session has gone, so skips are never filed over answers still waiting.
 let flushing = null;
 function flush() {
   flushing ??= (async () => {
     try {
+      const held = new Set();
       for (const item of await outboxAll()) {
-        if (!(await send(item))) break;  // keep order; try again later
-        await outboxDel(item.n);
+        const key = `${item.day}|${item.set}`;
+        if (item.kind === "finish" && held.has(key)) continue;
+        if (await send(item)) await outboxDel(item.n);
+        else held.add(key);
       }
     } finally { flushing = null; }
   })();
   return flushing;
 }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function send(item) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), item.kind === "audio" ? 60000 : 20000);  // a stuck upload gives up
   try {
     let res;
     if (item.kind === "audio") {
       const f = new FormData();
       f.append("audio", item.blob, `${item.day}__${item.set}__${item.prompt}.${item.ext}`);
       f.append("recorded_at", item.at);
-      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token() }, body: f });
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token() }, body: f, signal: ctl.signal });
     } else {
       const body = item.kind === "text"
         ? { action: "answer", journal_day: item.day, set: item.set, prompt_id: item.prompt, text: item.text, recorded_at: item.at }
         : { action: "finish", journal_day: item.day, set: item.set, shown: item.shown };
-      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body) });
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
     }
     const data = await res.json().catch(() => ({}));
     if (item.kind === "finish" && data.saved) lastFinish = data.message;
     return data.saved === true;
   } catch { return false; }
+  finally { clearTimeout(timer); }
 }
 let lastFinish = "";
 const pending = async () => (await outboxAll()).length;
@@ -174,8 +183,9 @@ let list = null, i = 0, shown = [];
 
 async function load(nightlyOnly = false) {
   if (!token()) return show("s-setup");
-  message("…", "");
-  await flush();  // send anything waiting first, so what's due reflects it
+  const waiting = await pending();
+  message(waiting ? `Sending ${waiting} waiting answer${waiting > 1 ? "s" : ""}…` : "…", "");
+  await Promise.race([flush(), sleep(15000)]);  // send what's waiting first, but never hold the page up for long
   let data;
   try {
     const res = await fetch(ENDPOINT + (nightlyOnly ? "?nightly_only=true" : ""), { headers: { "x-capture-token": token() } });
