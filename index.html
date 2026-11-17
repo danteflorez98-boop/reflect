@@ -175,7 +175,7 @@ let list = null, i = 0, shown = [];
 async function load(nightlyOnly = false) {
   if (!token()) return show("s-setup");
   message("…", "");
-  flush();
+  await flush();  // send anything waiting first, so what's due reflects it
   let data;
   try {
     const res = await fetch(ENDPOINT + (nightlyOnly ? "?nightly_only=true" : ""), { headers: { "x-capture-token": token() } });
