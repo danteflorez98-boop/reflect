@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Reflect">
+<meta name="theme-color" content="#0e1116">
+<meta name="robots" content="noindex">
+<title>Reflect</title>
+<style>
+  :root {
+    --bg: #0e1116; --ink: #ece6dc; --dim: #8a8f98; --faint: #2a2f38;
+    --accent: #c9a96e; --rec: #d9534f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 17px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; overscroll-behavior: none; }
+  body { display: flex; flex-direction: column;
+    padding: calc(env(safe-area-inset-top) + 18px) 24px calc(env(safe-area-inset-bottom) + 20px); }
+  .screen { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .screen.on { display: flex; }
+
+  .top { display: flex; justify-content: space-between; align-items: center; color: var(--dim); font-size: 14px; letter-spacing: .02em; }
+  .dots { display: flex; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); transition: background .3s; }
+  .dot.done { background: var(--accent); }
+  .dot.now { background: var(--ink); }
+
+  .question { flex: 1; display: flex; align-items: center;
+    font-family: ui-serif, "New York", Georgia, serif; font-size: clamp(28px, 8.2vw, 38px); line-height: 1.22;
+    padding: 24px 0; transition: opacity .25s; }
+  .question.fade { opacity: 0; }
+
+  .bottom { display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  .rec { width: 92px; height: 92px; border-radius: 50%; border: 2px solid var(--ink); background: transparent;
+    display: flex; align-items: center; justify-content: center; padding: 0; }
+  .rec i { width: 64px; height: 64px; border-radius: 50%; background: var(--rec); transition: all .2s; }
+  .rec.on { border-color: var(--rec); animation: pulse 1.6s ease-in-out infinite; }
+  .rec.on i { width: 34px; height: 34px; border-radius: 8px; }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 12px rgba(217,83,79,.15); } }
+  .hint { color: var(--dim); font-size: 15px; height: 20px; font-variant-numeric: tabular-nums; }
+  .links { display: flex; gap: 34px; }
+  .links button, .link { background: none; border: 0; color: var(--dim); font: inherit; font-size: 16px; padding: 8px; }
+
+  textarea { width: 100%; min-height: 130px; background: #161a21; color: var(--ink); border: 1px solid var(--faint);
+    border-radius: 14px; padding: 14px; font: inherit; font-size: 18px; resize: none; }
+  .primary { width: 100%; padding: 16px; border-radius: 14px; border: 0; background: var(--ink); color: var(--bg);
+    font: inherit; font-weight: 600; font-size: 17px; }
+  .primary:disabled { opacity: .4; }
+  .ghost { width: 100%; padding: 16px; border-radius: 14px; border: 1px solid var(--faint); background: transparent;
+    color: var(--ink); font: inherit; font-size: 17px; }
+
+  .centre { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 16px; }
+  .big { font-family: ui-serif, "New York", Georgia, serif; font-size: 30px; line-height: 1.25; }
+  .small { color: var(--dim); font-size: 15px; }
+  input[type=password] { width: 100%; padding: 14px; border-radius: 14px; border: 1px solid var(--faint);
+    background: #161a21; color: var(--ink); font: inherit; font-size: 17px; }
+</style>
+</head>
+<body>
+
+<!-- Password, asked once and kept on this phone only. -->
+<section class="screen" id="s-setup">
+  <div class="centre">
+    <div class="big">Reflect</div>
+    <div class="small">Paste your capture password once. It stays on this phone.</div>
+    <input type="password" id="pw" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button class="primary" id="pw-save">Save</button>
+  </div>
+</section>
+
+<section class="screen" id="s-msg">
+  <div class="centre">
+    <div class="big" id="msg-big"></div>
+    <div class="small" id="msg-small"></div>
+    <button class="ghost" id="msg-btn" style="display:none"></button>
+  </div>
+</section>
+
+<!-- Bigger reflection night: choose it, or just the nightly. -->
+<section class="screen" id="s-choose">
+  <div class="centre">
+    <div class="big" id="choose-title"></div>
+    <div class="small" id="choose-sub"></div>
+    <button class="primary" id="choose-start">Start</button>
+    <button class="ghost" id="choose-nightly">Just the nightly tonight</button>
+  </div>
+</section>
+
+<section class="screen" id="s-q">
+  <div class="top"><span id="q-title"></span><span class="dots" id="q-dots"></span></div>
+  <div class="question" id="q-text"></div>
+  <div class="bottom" id="q-voice">
+    <div class="hint" id="q-hint">Tap to answer</div>
+    <button class="rec" id="q-rec" aria-label="Record"><i></i></button>
+    <div class="links"><button id="q-type">Type instead</button><button id="q-skip">Skip</button></div>
+  </div>
+  <div class="bottom" id="q-typing" style="display:none">
+    <textarea id="q-input" placeholder="Type your answer"></textarea>
+    <button class="primary" id="q-send">Next</button>
+    <div class="links"><button id="q-voice-back">Speak instead</button><button id="q-skip2">Skip</button></div>
+  </div>
+</section>
+
+<script>
+// Reflect v1 (15 Nov 2026). Talks only to the evening_reflection Edge Function; logic lives in
+// "Journal — Reflection Spec". Every answer goes to an outbox on this phone first (IndexedDB) and is sent in the
+// background, so nothing waits and nothing is lost offline. An item leaves the outbox only once the server says saved.
+const ENDPOINT = "https://lzgfhiwdxqtbbgnvnarm.supabase.co/functions/v1/evening_reflection";
+const $ = (id) => document.getElementById(id);
+const show = (id) => { document.querySelectorAll(".screen").forEach((s) => s.classList.toggle("on", s.id === id)); };
+const token = () => localStorage.getItem("reflection_token") || "";
+
+// ---------- Outbox (IndexedDB) ----------
+let dbp;
+function db() {
+  dbp ??= new Promise((res, rej) => {
+    const r = indexedDB.open("reflect", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("outbox", { keyPath: "n", autoIncrement: true });
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return dbp;
+}
+async function tx(mode, fn) {
+  const d = await db();
+  return new Promise((res, rej) => {
+    const t = d.transaction("outbox", mode); const out = fn(t.objectStore("outbox"));
+    t.oncomplete = () => res(out?.result); t.onerror = () => rej(t.error);
+  });
+}
+const outboxAdd = (item) => tx("readwrite", (s) => s.add(item));
+const outboxAll = () => tx("readonly", (s) => s.getAll());
+const outboxDel = (n) => tx("readwrite", (s) => s.delete(n));
+
+let flushing = null;
+function flush() {
+  flushing ??= (async () => {
+    try {
+      for (const item of await outboxAll()) {
+        if (!(await send(item))) break;  // keep order; try again later
+        await outboxDel(item.n);
+      }
+    } finally { flushing = null; }
+  })();
+  return flushing;
+}
+async function send(item) {
+  try {
+    let res;
+    if (item.kind === "audio") {
+      const f = new FormData();
+      f.append("audio", item.blob, `${item.day}__${item.set}__${item.prompt}.${item.ext}`);
+      f.append("recorded_at", item.at);
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token() }, body: f });
+    } else {
+      const body = item.kind === "text"
+        ? { action: "answer", journal_day: item.day, set: item.set, prompt_id: item.prompt, text: item.text, recorded_at: item.at }
+        : { action: "finish", journal_day: item.day, set: item.set, shown: item.shown };
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body) });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (item.kind === "finish" && data.saved) lastFinish = data.message;
+    return data.saved === true;
+  } catch { return false; }
+}
+let lastFinish = "";
+const pending = async () => (await outboxAll()).length;
+
+// ---------- Session ----------
+let list = null, i = 0, shown = [];
+
+async function load(nightlyOnly = false) {
+  if (!token()) return show("s-setup");
+  message("…", "");
+  flush();
+  let data;
+  try {
+    const res = await fetch(ENDPOINT + (nightlyOnly ? "?nightly_only=true" : ""), { headers: { "x-capture-token": token() } });
+    data = await res.json();
+    if (res.status === 401) { localStorage.removeItem("reflection_token"); return message("That password didn't work.", "", "Try again", () => show("s-setup")); }
+  } catch {
+    return message("Can't reach the server.", "Check your connection.", "Try again", () => load(nightlyOnly));
+  }
+  if (data.status === "done") return message(data.message, "");
+  if (data.status !== "ready" || !data.questions?.length) return message("Nothing to ask tonight.", data.message || "");
+  list = data; i = 0; shown = [];
+  if (data.offer_nightly_only) {
+    $("choose-title").textContent = data.title;
+    $("choose-sub").textContent = `${data.questions.length} questions`;
+    return show("s-choose");
+  }
+  start();
+}
+
+function message(big, small, btn, fn) {
+  $("msg-big").textContent = big; $("msg-small").textContent = small || "";
+  const b = $("msg-btn"); b.style.display = btn ? "" : "none"; b.textContent = btn || ""; b.onclick = fn || null;
+  show("s-msg");
+}
+
+function start() {
+  $("q-title").textContent = list.title;
+  $("q-dots").innerHTML = list.questions.map(() => '<span class="dot"></span>').join("");
+  try { navigator.wakeLock?.request("screen"); } catch {}
+  show("s-q"); render();
+}
+
+function render() {
+  const q = list.questions[i];
+  $("q-text").textContent = q.text;
+  [...$("q-dots").children].forEach((d, k) => { d.className = "dot" + (k < i ? " done" : k === i ? " now" : ""); });
+  voiceMode();
+}
+
+async function next() {
+  shown.push(list.questions[i].id);
+  i++;
+  if (i < list.questions.length) {
+    $("q-text").classList.add("fade");
+    setTimeout(() => { render(); $("q-text").classList.remove("fade"); }, 180);
+    return;
+  }
+  await outboxAdd({ kind: "finish", day: list.journal_day, set: list.set, shown });
+  message("Saving…", "");
+  await flush(); await flush();  // the second pass picks up anything added while the first was running
+  const left = await pending();
+  if (left) message("Saved on your phone.", `${left} item${left > 1 ? "s" : ""} will send next time you open this.`, "Try sending now", async () => { await flush(); load(); });
+  else message("Done.", lastFinish || "");
+}
+
+function base() { const q = list.questions[i]; return { day: list.journal_day, set: list.set, prompt: q.id, at: new Date().toISOString() }; }
+
+// ---------- Voice ----------
+let stream = null, rec = null, chunks = [], t0 = 0, timer = null;
+const mime = () => (window.MediaRecorder && MediaRecorder.isTypeSupported?.("audio/mp4")) ? ["audio/mp4", "m4a"] : ["audio/webm", "webm"];
+
+async function toggleRec() {
+  if (rec?.state === "recording") return rec.stop();
+  try { stream ??= await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch { $("q-hint").textContent = "Microphone blocked: type instead"; return; }
+  const [type, ext] = mime();
+  chunks = []; rec = new MediaRecorder(stream, { mimeType: type });
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  rec.onstop = async () => {
+    clearInterval(timer); $("q-rec").classList.remove("on");
+    const secs = (Date.now() - t0) / 1000;
+    if (secs < 1) { $("q-hint").textContent = "Tap to answer"; return; }  // a mis-tap, not an answer
+    await outboxAdd({ kind: "audio", ...base(), blob: new Blob(chunks, { type }), ext });
+    flush(); next();
+  };
+  rec.start(); t0 = Date.now(); $("q-rec").classList.add("on");
+  const tick = () => { const s = Math.floor((Date.now() - t0) / 1000); $("q-hint").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}  ·  tap when done`; };
+  tick(); timer = setInterval(tick, 500);
+}
+
+// ---------- Typing ----------
+function voiceMode() { $("q-voice").style.display = ""; $("q-typing").style.display = "none"; $("q-hint").textContent = "Tap to answer"; }
+function typeMode() {
+  if (rec?.state === "recording") { rec.onstop = null; rec.stop(); clearInterval(timer); $("q-rec").classList.remove("on"); }
+  $("q-voice").style.display = "none"; $("q-typing").style.display = ""; $("q-input").value = ""; $("q-input").focus();
+}
+async function sendTyped() {
+  const text = $("q-input").value.trim();
+  if (text) { await outboxAdd({ kind: "text", ...base(), text }); flush(); }
+  $("q-input").blur(); next();
+}
+function skip() {
+  if (rec?.state === "recording") { rec.onstop = null; rec.stop(); clearInterval(timer); $("q-rec").classList.remove("on"); }
+  next();
+}
+
+// ---------- Wiring ----------
+$("pw-save").onclick = () => { const v = $("pw").value.trim(); if (v) { localStorage.setItem("reflection_token", v); $("pw").value = ""; load(); } };
+$("choose-start").onclick = start;
+$("choose-nightly").onclick = () => load(true);
+$("q-rec").onclick = toggleRec;
+$("q-type").onclick = typeMode;
+$("q-voice-back").onclick = voiceMode;
+$("q-skip").onclick = skip;
+$("q-skip2").onclick = skip;
+$("q-send").onclick = sendTyped;
+window.addEventListener("online", flush);
+load();
+</script>
+</body>
+</html>
