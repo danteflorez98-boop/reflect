@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="34 52 436 436">
+  <defs>
+    <radialGradient id="sky" cx="30%" cy="22%" r="95%">
+      <stop offset="0" stop-color="#25304f"/>
+      <stop offset=".45" stop-color="#141b30"/>
+      <stop offset="1" stop-color="#06080e"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#c9a96e" stop-opacity=".35"/>
+      <stop offset="1" stop-color="#c9a96e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="marble" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f6f2ea"/>
+      <stop offset=".55" stop-color="#ddd8ce"/>
+      <stop offset="1" stop-color="#a9a59d"/>
+    </linearGradient>
+    <linearGradient id="far" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b9b5ad"/>
+      <stop offset="1" stop-color="#7f7c76"/>
+    </linearGradient>
+    <linearGradient id="rock" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a3f4a"/>
+      <stop offset="1" stop-color="#1c2028"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="-20" y="-20" width="560" height="560" fill="url(#sky)"/>
+  <!-- stars -->
+  <g fill="#fff">
+    <circle cx="300" cy="70" r="1.6" opacity=".7"/><circle cx="380" cy="120" r="1.2" opacity=".5"/>
+    <circle cx="455" cy="60" r="1.8" opacity=".6"/><circle cx="60" cy="230" r="1.2" opacity=".5"/>
+    <circle cx="215" cy="150" r="1.4" opacity=".55"/><circle cx="440" cy="200" r="1.1" opacity=".45"/>
+    <circle cx="40" cy="80" r="1.3" opacity=".5"/><circle cx="250" cy="40" r="1" opacity=".5"/>
+  </g>
+  <!-- moon, top left, where he's looking -->
+  <circle cx="122" cy="118" r="78" fill="url(#glow)"/>
+  <path d="M150 74 A48 48 0 1 0 156 168 A38 38 0 1 1 150 74 Z" fill="#c9a96e"/>
+
+  <!-- figure, drawn facing right, mirrored to face left -->
+  <g transform="translate(512 0) scale(-1 1) translate(-30 0)">
+    <!-- small low rock -->
+    <path d="M150 452 Q156 414 200 408 L262 408 Q296 412 300 446 L302 470 L146 470 Z" fill="url(#rock)"/>
+    <!-- far leg -->
+    <path d="M236 404 Q290 356 338 336 Q352 340 350 356 L346 456 Q344 466 332 466 L324 466 L326 372 Q290 392 258 418 Z" fill="url(#far)"/>
+    <!-- torso: back, chest, belly -->
+    <path d="M200 414 Q190 362 202 316 Q212 274 238 252 Q252 242 268 246 Q284 254 286 270 Q286 296 278 322 Q270 348 266 372 Q258 404 238 418 Z" fill="url(#marble)"/>
+    <!-- neck and head, tilted up -->
+    <path d="M262 248 Q266 226 278 216 L290 226 Q284 240 280 252 Z" fill="#e9e4da"/>
+    <ellipse cx="296" cy="200" rx="25" ry="29" transform="rotate(-30 296 200)" fill="url(#marble)"/>
+    <path d="M314 186 Q324 192 318 202 Q314 196 310 196 Z" fill="#e9e4da"/>
+    <path d="M276 196 Q278 214 292 224 Q280 222 274 208 Z" fill="#a9a59d" opacity=".7"/>
+    <!-- near thigh, knee high -->
+    <path d="M204 410 Q250 372 316 324 Q336 314 348 326 Q356 342 340 352 Q290 384 236 422 Z" fill="url(#marble)"/>
+    <!-- near shin and foot -->
+    <path d="M330 334 Q350 336 352 352 L346 448 Q350 458 370 462 Q378 468 368 472 L330 472 Q322 470 324 456 L326 360 Z" fill="url(#marble)"/>
+    <!-- upper arm, from shoulder down to the knee -->
+    <path d="M250 254 Q272 250 282 268 Q300 296 322 316 Q330 326 318 332 Q306 334 296 322 Q270 298 250 280 Z" fill="#d6d1c7"/>
+    <!-- forearm up to the chin, hand under jaw -->
+    <path d="M308 326 Q298 320 300 306 L306 238 Q308 226 318 226 Q328 228 326 240 L322 312 Q320 326 308 326 Z" fill="url(#marble)"/>
+    <path d="M300 236 Q306 220 322 222 Q330 226 326 238 Q316 232 304 240 Z" fill="#cfcac0"/>
+    <!-- a little shadow under the arm and along the back -->
+    <path d="M270 300 Q284 318 300 326 Q282 324 268 312 Z" fill="#8f8c86" opacity=".6"/>
+    <path d="M198 320 Q194 360 204 404 Q190 370 192 330 Z" fill="#8f8c86" opacity=".5"/>
+  </g>
+</svg>
