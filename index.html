@@ -60,6 +60,22 @@
   .small { color: var(--dim); font-size: 15px; }
   input[type=password] { width: 100%; padding: 14px; border-radius: 14px; border: 1px solid var(--faint);
     background: #161a21; color: var(--ink); font: inherit; font-size: 17px; }
+
+  /* v1.2: bigger-reflection scores */
+  .lead { font-family: ui-serif, "New York", Georgia, serif; font-size: 26px; line-height: 1.25; margin: 22px 0 6px; }
+  .rows { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 12px 0 18px; }
+  .row-label { font-size: 15px; color: var(--ink); margin-bottom: 6px; }
+  .scale { display: flex; justify-content: space-between; gap: 8px; }
+  .scale button { flex: 1; height: 44px; border-radius: 12px; border: 1px solid var(--faint); background: transparent;
+    color: var(--dim); font: inherit; font-size: 17px; font-variant-numeric: tabular-nums; }
+  .scale button.on { background: var(--accent); border-color: var(--accent); color: var(--bg); font-weight: 600; }
+  .cmp { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .cmp th { text-align: right; color: var(--dim); font-weight: 400; font-size: 13px; padding: 0 0 8px; }
+  .cmp th:first-child, .cmp td:first-child { text-align: left; }
+  .cmp td { text-align: right; padding: 11px 0; border-top: 1px solid var(--faint); font-size: 17px; }
+  .cmp td.f { color: var(--accent); font-weight: 600; width: 64px; }
+  .cmp td.l { width: 92px; }
+  .cmp .none { color: var(--dim); font-size: 14px; }
 </style>
 </head>
 <body>
@@ -92,6 +108,26 @@
   </div>
 </section>
 
+<!-- v1.2: bigger reflections open with six felt scores, then the comparison with what was logged. -->
+<section class="screen" id="s-scores">
+  <div class="top"><span id="sc-title"></span><span id="sc-period"></span></div>
+  <div class="lead" id="sc-lead">How did it feel?</div>
+  <div class="small">1 low · 5 high. Leave any blank to skip it.</div>
+  <div class="rows" id="sc-rows"></div>
+  <div class="bottom">
+    <button class="primary" id="sc-next">Next</button>
+    <div class="links"><button id="sc-skip">Skip scores</button></div>
+  </div>
+</section>
+
+<section class="screen" id="s-compare">
+  <div class="top"><span id="cmp-title"></span><span id="cmp-period"></span></div>
+  <div class="lead">Felt and logged</div>
+  <div class="small" id="cmp-sub"></div>
+  <div class="rows"><table class="cmp" id="cmp-table"></table></div>
+  <div class="bottom"><button class="primary" id="cmp-next">Continue</button></div>
+</section>
+
 <section class="screen" id="s-q">
   <div class="top"><span id="q-title"></span><span class="dots" id="q-dots"></span></div>
   <div class="question" id="q-text"></div>
@@ -108,7 +144,9 @@
 </section>
 
 <script>
-// Reflect v1.1 (18 Nov 2026; v1 15 Nov). Talks only to the evening_reflection Edge Function; logic lives in
+// Reflect v1.2 (23 Nov 2026): bigger reflections open with six felt scores (1-5), then show felt beside the logged
+// average for the period (the logged numbers arrive with the list but stay hidden until the felt scores are in).
+// Scores go through the outbox like answers. v1.1 (18 Nov 2026; v1 15 Nov). Talks only to the evening_reflection Edge Function; logic lives in
 // "Journal — Reflection Spec". Every answer goes to an outbox on this phone first (IndexedDB) and is sent in the
 // background, so nothing waits and nothing is lost offline. An item leaves the outbox only once the server says saved.
 const ENDPOINT = "https://lzgfhiwdxqtbbgnvnarm.supabase.co/functions/v1/evening_reflection";
@@ -168,6 +206,8 @@ async function send(item) {
     } else {
       const body = item.kind === "text"
         ? { action: "answer", journal_day: item.day, set: item.set, prompt_id: item.prompt, text: item.text, recorded_at: item.at }
+        : item.kind === "scores"
+        ? { action: "scores", journal_day: item.day, set: item.set, scores: item.scores, recorded_at: item.at }
         : { action: "finish", journal_day: item.day, set: item.set, shown: item.shown };
       res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
     }
@@ -211,6 +251,49 @@ function message(big, small, btn, fn) {
   $("msg-big").textContent = big; $("msg-small").textContent = small || "";
   const b = $("msg-btn"); b.style.display = btn ? "" : "none"; b.textContent = btn || ""; b.onclick = fn || null;
   show("s-msg");
+}
+
+// ---------- Scores (v1.2) ----------
+let felt = {};
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function period() {
+  const a = list.scores_from, b = list.scores_to;
+  if (!a || !b) return "";
+  const [, am, ad] = a.split("-").map(Number), [, bm, bd] = b.split("-").map(Number);
+  return am === bm ? `${ad}–${bd} ${MONTHS[bm - 1]}` : `${ad} ${MONTHS[am - 1]} – ${bd} ${MONTHS[bm - 1]}`;
+}
+const LEADS = { weekly: "How did the week feel?", monthly: "How did the month feel?", quarterly: "How did the quarter feel?", yearly: "How did the year feel?" };
+
+function begin() { list.scores?.length ? scores() : start(); }
+
+function scores() {
+  felt = {};
+  $("sc-title").textContent = $("cmp-title").textContent = list.title;
+  $("sc-period").textContent = $("cmp-period").textContent = period();
+  $("sc-lead").textContent = LEADS[list.set] || "How did it feel?";
+  $("sc-rows").innerHTML = list.scores.map((s) =>
+    `<div><div class="row-label">${s.label}</div><div class="scale" data-m="${s.measure}">` +
+    [1, 2, 3, 4, 5].map((n) => `<button data-n="${n}">${n}</button>`).join("") + `</div></div>`).join("");
+  $("sc-rows").querySelectorAll(".scale").forEach((row) => row.onclick = (e) => {
+    const n = Number(e.target.dataset?.n); if (!n) return;
+    const m = row.dataset.m;
+    felt[m] = felt[m] === n ? undefined : n;  // tap again to clear
+    row.querySelectorAll("button").forEach((b) => b.classList.toggle("on", Number(b.dataset.n) === felt[m]));
+  });
+  show("s-scores");
+}
+
+async function scoresDone() {
+  const given = list.scores.filter((s) => felt[s.measure]).map((s) => ({ measure: s.measure, felt: felt[s.measure] }));
+  if (!given.length) return start();
+  await outboxAdd({ kind: "scores", day: list.journal_day, set: list.set, scores: given, at: new Date().toISOString() });
+  flush();
+  $("cmp-table").innerHTML = `<tr><th></th><th>Felt</th><th>Logged</th></tr>` + list.scores.map((s) =>
+    `<tr><td>${s.label}</td><td class="f">${felt[s.measure] ?? '<span class="none">–</span>'}</td>` +
+    `<td class="l">${s.logged != null ? s.logged.toFixed(1) : '<span class="none">not logged</span>'}</td></tr>`).join("");
+  const days = Math.max(0, ...list.scores.map((s) => s.days || 0));
+  $("cmp-sub").textContent = days ? `Logged = your average across ${days} day${days > 1 ? "s" : ""} with readings.` : "Nothing was logged in this period.";
+  show("s-compare");
 }
 
 function start() {
@@ -286,7 +369,10 @@ function skip() {
 
 // ---------- Wiring ----------
 $("pw-save").onclick = () => { const v = $("pw").value.trim(); if (v) { localStorage.setItem("reflection_token", v); $("pw").value = ""; load(); } };
-$("choose-start").onclick = start;
+$("choose-start").onclick = begin;
+$("sc-next").onclick = scoresDone;
+$("sc-skip").onclick = start;
+$("cmp-next").onclick = start;
 $("choose-nightly").onclick = () => load(true);
 $("q-rec").onclick = toggleRec;
 $("q-type").onclick = typeMode;
