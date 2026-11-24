@@ -170,6 +170,9 @@
 </section>
 
 <script>
+// Reflect v1.4 (24 Nov 2026, Dante's first use): fill-in items are one thing about one day (key "kind@day" or
+// "kind.part@day"; sleep quality is a tap). Every item asked on this phone, answered or skipped, is remembered for two
+// days (localStorage fill_in_asked) and sent as `exclude` with the menu and question requests, so it doesn't come back.
 // Reflect v1.3 (24 Nov 2026): opens on the start menu (Reflection Spec 10.6): Catch up (one missed reflection, filed on
 // its own day), Fill in (facts the Action Button didn't get; level kinds are 1-5 taps; endless until Done or nothing's
 // left; today's count), Tonight. Each is its own session and finishing one returns to the menu.
@@ -232,9 +235,10 @@ async function send(item) {
       f.append("audio", item.blob, `fill_in__${item.fill}.${item.ext}`);
       f.append("action", "fill_in"); f.append("kind", item.fill); f.append("about", item.about.join(","));
       f.append("question", item.question); f.append("recorded_at", item.at);
+      if (item.part) f.append("part", item.part);
       res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token() }, body: f, signal: ctl.signal });
     } else if (item.kind === "fill") {
-      const body = { action: "fill_in", kind: item.fill, about: item.about, question: item.question, text: item.text ?? "", value: item.value ?? null, recorded_at: item.at };
+      const body = { action: "fill_in", kind: item.fill, part: item.part ?? null, about: item.about, question: item.question, text: item.text ?? "", value: item.value ?? null, recorded_at: item.at };
       res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
     } else if (item.kind === "audio") {
       const f = new FormData();
@@ -279,7 +283,7 @@ async function menu(note) {
   const waiting = await pending();
   message(waiting ? `Sending ${waiting} waiting answer${waiting > 1 ? "s" : ""}…` : "…", "");
   await Promise.race([flush(), sleep(15000)]);  // send what's waiting first, but never hold the page up for long
-  try { menuData = await get("?menu=true"); } catch (e) { return failed(e, () => menu()); }
+  try { menuData = await get(`?menu=true&exclude=${encodeURIComponent(askedKeys().join(","))}`); } catch (e) { return failed(e, () => menu()); }
   const m = menuData, rows = [];
   if (m.catch_up) rows.push(`<button class="item" data-go="catch"><div><div class="t">${esc(m.catch_up.title.replace(/^Catch up: /, "").replace(/^./, (c) => c.toUpperCase()))}</div><div class="s">Catch up</div></div></button>`);
   if (m.fill_in?.waiting) rows.push(`<button class="item" data-go="fill"><div><div class="t">Fill in</div><div class="s">${m.fill_in.waiting} thing${m.fill_in.waiting > 1 ? "s" : ""} to top up</div></div><div class="n">${m.fill_in.count}</div></button>`);
@@ -452,8 +456,16 @@ function skip() {
 // Endless round: questions come a few at a time and more are fetched while he answers. Every kind asked this session
 // is excluded from later fetches, so a skipped (or still-uploading) kind isn't asked twice. Done ends it any time.
 let fq = [], fAsked = new Set(), fCount = 0, fRemaining = 1, fFetching = null, fCur = null;
+function askedStore() {
+  let m = {}; try { m = JSON.parse(localStorage.getItem("fill_in_asked") || "{}"); } catch {}
+  const cutoff = Date.now() - 2 * 86400000;
+  for (const k of Object.keys(m)) if (m[k] < cutoff) delete m[k];
+  return m;
+}
+function rememberAsked(key) { try { const m = askedStore(); m[key] = Date.now(); localStorage.setItem("fill_in_asked", JSON.stringify(m)); } catch {} }
+const askedKeys = () => Object.keys(askedStore());
 function fillIn() {
-  mode = "fill"; fq = []; fAsked = new Set(); fRemaining = 1; fCur = null;
+  mode = "fill"; fq = []; fAsked = new Set(askedKeys()); fRemaining = 1; fCur = null;
   fCount = menuData?.fill_in?.count ?? 0;
   $("q-title").textContent = "Fill in"; $("q-done-row").style.display = "";
   show("s-q"); $("q-text").textContent = "Writing your questions…"; $("q-scale").style.display = "none";
@@ -463,8 +475,8 @@ function fillIn() {
 function fetchFill() {
   fFetching ??= (async () => {
     try {
-      const d = await get(`?fill_in=true&n=3&exclude=${encodeURIComponent([...fAsked, ...fq.map((q) => q.kind)].join(","))}`);
-      for (const q of d.questions ?? []) if (!fAsked.has(q.kind) && !fq.some((x) => x.kind === q.kind)) fq.push(q);
+      const d = await get(`?fill_in=true&n=3&exclude=${encodeURIComponent([...fAsked, ...fq.map((q) => q.key)].join(","))}`);
+      for (const q of d.questions ?? []) if (!fAsked.has(q.key) && !fq.some((x) => x.key === q.key)) fq.push(q);
       fRemaining = d.remaining ?? 0;
     } catch { fRemaining = 0; }
     finally { fFetching = null; }
@@ -472,12 +484,12 @@ function fetchFill() {
   return fFetching;
 }
 async function nextFill(first = false) {
-  if (!first && fCur) fAsked.add(fCur.kind);
+  if (!first && fCur) fAsked.add(fCur.key);
   fCur = null;
   if (!fq.length && fFetching) { $("q-text").textContent = "…"; hideInputs(); await fFetching; }
   if (!fq.length && fRemaining > 0) { $("q-text").textContent = "…"; hideInputs(); await fetchFill(); }
   if (!fq.length) return fillDone(fAsked.size ? "That's everything for now." : "Nothing to fill in right now.");
-  fCur = fq.shift(); fAsked.add(fCur.kind);
+  fCur = fq.shift(); fAsked.add(fCur.key); rememberAsked(fCur.key);
   if (fq.length < 2 && fRemaining > 0) fetchFill();  // keep a question ready while he answers
   $("q-text").classList.add("fade");
   setTimeout(() => { renderFill(); $("q-text").classList.remove("fade"); }, 180);
@@ -493,7 +505,7 @@ function renderFill() {
   } else voiceMode();
 }
 function showCount() { $("q-dots").innerHTML = `<span class="count">${fCount} today</span>`; }
-function fillBase() { return { fill: fCur.kind, about: fCur.about, question: fCur.question, at: new Date().toISOString() }; }
+function fillBase() { return { fill: fCur.kind, part: fCur.part || null, about: fCur.about, question: fCur.question, at: new Date().toISOString() }; }
 function answered() { if (mode === "fill") { fCount++; showCount(); } }
 async function tapScale(e) {
   const n = Number(e.target.dataset?.n); if (!n || !fCur) return;
