@@ -76,6 +76,20 @@
   .cmp td.f { color: var(--accent); font-weight: 600; width: 64px; }
   .cmp td.l { width: 92px; }
   .cmp .none { color: var(--dim); font-size: 14px; }
+
+  /* v1.3: start menu and fill-ins */
+  .items { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+  .item { width: 100%; text-align: left; padding: 18px 18px 16px; border-radius: 16px; border: 1px solid var(--faint);
+    background: #131820; color: var(--ink); font: inherit; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .item .t { font-family: ui-serif, "New York", Georgia, serif; font-size: 23px; line-height: 1.2; }
+  .item .s { color: var(--dim); font-size: 14px; margin-top: 4px; }
+  .item .n { color: var(--accent); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .item.main { border-color: var(--accent); }
+  .note { color: var(--dim); font-size: 14px; text-align: center; min-height: 20px; }
+  .count { color: var(--accent); font-variant-numeric: tabular-nums; }
+  #q-scale .scale button { height: 58px; font-size: 22px; }
+  #q-scale .scale { width: 100%; }
+  #q-scale { width: 100%; }
 </style>
 </head>
 <body>
@@ -88,6 +102,13 @@
     <input type="password" id="pw" autocomplete="off" autocapitalize="off" spellcheck="false">
     <button class="primary" id="pw-save">Save</button>
   </div>
+</section>
+
+<!-- v1.3: the start menu. Catch up / Fill in / Tonight, each only when it applies. -->
+<section class="screen" id="s-menu">
+  <div class="top"><span>Reflect</span><span id="m-date"></span></div>
+  <div class="items" id="m-items"></div>
+  <div class="note" id="m-note"></div>
 </section>
 
 <section class="screen" id="s-msg">
@@ -131,6 +152,11 @@
 <section class="screen" id="s-q">
   <div class="top"><span id="q-title"></span><span class="dots" id="q-dots"></span></div>
   <div class="question" id="q-text"></div>
+  <div class="links" id="q-done-row" style="display:none;justify-content:center;margin-bottom:6px"><button id="q-done">Done</button></div>
+  <div class="bottom" id="q-scale" style="display:none">
+    <div class="scale" id="q-scale-row"></div>
+    <div class="links"><button id="q-speak">Speak</button><button id="q-type3">Type</button><button id="q-skip3">Skip</button></div>
+  </div>
   <div class="bottom" id="q-voice">
     <div class="hint" id="q-hint">Tap to answer</div>
     <button class="rec" id="q-rec" aria-label="Record"><i></i></button>
@@ -144,6 +170,9 @@
 </section>
 
 <script>
+// Reflect v1.3 (24 Nov 2026): opens on the start menu (Reflection Spec 10.6): Catch up (one missed reflection, filed on
+// its own day), Fill in (facts the Action Button didn't get; level kinds are 1-5 taps; endless until Done or nothing's
+// left; today's count), Tonight. Each is its own session and finishing one returns to the menu.
 // Reflect v1.2 (23 Nov 2026): bigger reflections open with six felt scores (1-5), then show felt beside the logged
 // average for the period (the logged numbers arrive with the list but stay hidden until the felt scores are in).
 // Scores go through the outbox like answers. v1.1 (18 Nov 2026; v1 15 Nov). Talks only to the evening_reflection Edge Function; logic lives in
@@ -195,10 +224,19 @@ function flush() {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function send(item) {
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), item.kind === "audio" ? 60000 : 20000);  // a stuck upload gives up
+  const timer = setTimeout(() => ctl.abort(), item.kind === "audio" || item.kind === "fill_audio" ? 60000 : 30000);  // a stuck upload gives up
   try {
     let res;
-    if (item.kind === "audio") {
+    if (item.kind === "fill_audio") {
+      const f = new FormData();
+      f.append("audio", item.blob, `fill_in__${item.fill}.${item.ext}`);
+      f.append("action", "fill_in"); f.append("kind", item.fill); f.append("about", item.about.join(","));
+      f.append("question", item.question); f.append("recorded_at", item.at);
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token() }, body: f, signal: ctl.signal });
+    } else if (item.kind === "fill") {
+      const body = { action: "fill_in", kind: item.fill, about: item.about, question: item.question, text: item.text ?? "", value: item.value ?? null, recorded_at: item.at };
+      res = await fetch(ENDPOINT, { method: "POST", headers: { "x-capture-token": token(), "content-type": "application/json" }, body: JSON.stringify(body), signal: ctl.signal });
+    } else if (item.kind === "audio") {
       const f = new FormData();
       f.append("audio", item.blob, `${item.day}__${item.set}__${item.prompt}.${item.ext}`);
       f.append("recorded_at", item.at);
@@ -221,24 +259,56 @@ let lastFinish = "";
 const pending = async () => (await outboxAll()).length;
 
 // ---------- Session ----------
-let list = null, i = 0, shown = [];
+let list = null, i = 0, shown = [], mode = "reflect";
 
-async function load(nightlyOnly = false) {
+async function get(query) {
+  const res = await fetch(ENDPOINT + query, { headers: { "x-capture-token": token() } });
+  if (res.status === 401) { localStorage.removeItem("reflection_token"); throw new Error("401"); }
+  return res.json();
+}
+function failed(e, retry) {
+  if (String(e?.message) === "401") return message("That password didn't work.", "", "Try again", () => show("s-setup"));
+  message("Can't reach the server.", "Check your connection.", "Try again", retry);
+}
+
+// v1.3: the start menu.
+let menuData = null, menuNote = "";
+async function menu(note) {
   if (!token()) return show("s-setup");
+  if (note !== undefined) menuNote = note;
   const waiting = await pending();
   message(waiting ? `Sending ${waiting} waiting answer${waiting > 1 ? "s" : ""}…` : "…", "");
   await Promise.race([flush(), sleep(15000)]);  // send what's waiting first, but never hold the page up for long
-  let data;
-  try {
-    const res = await fetch(ENDPOINT + (nightlyOnly ? "?nightly_only=true" : ""), { headers: { "x-capture-token": token() } });
-    data = await res.json();
-    if (res.status === 401) { localStorage.removeItem("reflection_token"); return message("That password didn't work.", "", "Try again", () => show("s-setup")); }
-  } catch {
-    return message("Can't reach the server.", "Check your connection.", "Try again", () => load(nightlyOnly));
-  }
-  if (data.status === "done") return message(data.message, "");
-  if (data.status !== "ready" || !data.questions?.length) return message("Nothing to ask tonight.", data.message || "");
-  list = data; i = 0; shown = [];
+  try { menuData = await get("?menu=true"); } catch (e) { return failed(e, () => menu()); }
+  const m = menuData, rows = [];
+  if (m.catch_up) rows.push(`<button class="item" data-go="catch"><div><div class="t">${esc(m.catch_up.title.replace(/^Catch up: /, "").replace(/^./, (c) => c.toUpperCase()))}</div><div class="s">Catch up</div></div></button>`);
+  if (m.fill_in?.waiting) rows.push(`<button class="item" data-go="fill"><div><div class="t">Fill in</div><div class="s">${m.fill_in.waiting} thing${m.fill_in.waiting > 1 ? "s" : ""} to top up</div></div><div class="n">${m.fill_in.count}</div></button>`);
+  if (m.tonight?.status === "ready") rows.push(`<button class="item main" data-go="tonight"><div><div class="t">${esc(m.tonight.title)}</div><div class="s">Tonight</div></div></button>`);
+  if (!rows.length) rows.push(`<div class="centre"><div class="big">All done for tonight</div><div class="small">${m.fill_in?.count ?? 0} filled in today</div></div>`);
+  $("m-items").innerHTML = rows.join("");
+  $("m-items").querySelectorAll("[data-go]").forEach((b) => b.onclick = () => ({ catch: catchUp, fill: fillIn, tonight: () => load(false) })[b.dataset.go]());
+  $("m-date").textContent = dayLabel(m.journal_day);
+  $("m-note").textContent = menuNote; menuNote = "";
+  show("s-menu");
+}
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+function dayLabel(d) { if (!d) return ""; const [y, mo, da] = d.split("-").map(Number); const w = new Date(Date.UTC(y, mo - 1, da)).getUTCDay(); return `${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][w]} ${da} ${MONTHS[mo - 1]}`; }
+
+async function catchUp() {
+  message("…", "");
+  let data; try { data = await get("?catch_up=true"); } catch (e) { return failed(e, catchUp); }
+  if (data.status !== "ready" || !data.questions?.length) return menu(data.message || "Nothing to catch up.");
+  mode = "reflect"; list = data; i = 0; shown = [];
+  begin();
+}
+
+// Tonight's reflection.
+async function load(nightlyOnly = false) {
+  message("…", "");
+  let data; try { data = await get(nightlyOnly ? "?nightly_only=true" : ""); } catch (e) { return failed(e, () => load(nightlyOnly)); }
+  if (data.status === "done") return menu(data.message);
+  if (data.status !== "ready" || !data.questions?.length) return menu("Nothing to ask tonight.");
+  mode = "reflect"; list = data; i = 0; shown = [];
   if (data.offer_nightly_only) {
     $("choose-title").textContent = data.title;
     $("choose-sub").textContent = `${data.questions.length} questions`;
@@ -297,6 +367,7 @@ async function scoresDone() {
 }
 
 function start() {
+  mode = "reflect"; $("q-done-row").style.display = "none";
   $("q-title").textContent = list.title;
   $("q-dots").innerHTML = list.questions.map(() => '<span class="dot"></span>').join("");
   try { navigator.wakeLock?.request("screen"); } catch {}
@@ -304,6 +375,7 @@ function start() {
 }
 
 function render() {
+  if (mode === "fill") return renderFill();
   const q = list.questions[i];
   $("q-text").textContent = q.text;
   [...$("q-dots").children].forEach((d, k) => { d.className = "dot" + (k < i ? " done" : k === i ? " now" : ""); });
@@ -311,6 +383,7 @@ function render() {
 }
 
 async function next() {
+  if (mode === "fill") return nextFill();
   shown.push(list.questions[i].id);
   i++;
   if (i < list.questions.length) {
@@ -322,8 +395,8 @@ async function next() {
   message("Saving…", "");
   await flush(); await flush();  // the second pass picks up anything added while the first was running
   const left = await pending();
-  if (left) message("Saved on your phone.", `${left} item${left > 1 ? "s" : ""} will send next time you open this.`, "Try sending now", async () => { await flush(); load(); });
-  else message("Done.", lastFinish || "");
+  if (left) message("Saved on your phone.", `${left} item${left > 1 ? "s" : ""} will send next time you open this.`, "Back to the menu", () => menu());
+  else menu(lastFinish || "Saved.");
 }
 
 function base() { const q = list.questions[i]; return { day: list.journal_day, set: list.set, prompt: q.id, at: new Date().toISOString() }; }
@@ -343,8 +416,10 @@ async function toggleRec() {
     clearInterval(timer); $("q-rec").classList.remove("on");
     const secs = (Date.now() - t0) / 1000;
     if (secs < 1) { $("q-hint").textContent = "Tap to answer"; return; }  // a mis-tap, not an answer
-    await outboxAdd({ kind: "audio", ...base(), blob: new Blob(chunks, { type }), ext });
-    flush(); next();
+    const blob = new Blob(chunks, { type });
+    if (mode === "fill") await outboxAdd({ kind: "fill_audio", ...fillBase(), blob, ext });
+    else await outboxAdd({ kind: "audio", ...base(), blob, ext });
+    flush(); answered(); next();
   };
   rec.start(); t0 = Date.now(); $("q-rec").classList.add("on");
   const tick = () => { const s = Math.floor((Date.now() - t0) / 1000); $("q-hint").textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}  ·  tap when done`; };
@@ -352,14 +427,20 @@ async function toggleRec() {
 }
 
 // ---------- Typing ----------
-function voiceMode() { $("q-voice").style.display = ""; $("q-typing").style.display = "none"; $("q-hint").textContent = "Tap to answer"; }
+function voiceMode() { $("q-scale").style.display = "none"; $("q-voice").style.display = ""; $("q-typing").style.display = "none"; $("q-hint").textContent = "Tap to answer"; }
+function scaleMode() { $("q-scale").style.display = ""; $("q-voice").style.display = "none"; $("q-typing").style.display = "none"; }
 function typeMode() {
+  $("q-scale").style.display = "none";
   if (rec?.state === "recording") { rec.onstop = null; rec.stop(); clearInterval(timer); $("q-rec").classList.remove("on"); }
   $("q-voice").style.display = "none"; $("q-typing").style.display = ""; $("q-input").value = ""; $("q-input").focus();
 }
 async function sendTyped() {
   const text = $("q-input").value.trim();
-  if (text) { await outboxAdd({ kind: "text", ...base(), text }); flush(); }
+  if (text) {
+    if (mode === "fill") await outboxAdd({ kind: "fill", ...fillBase(), text });
+    else await outboxAdd({ kind: "text", ...base(), text });
+    flush(); answered();
+  }
   $("q-input").blur(); next();
 }
 function skip() {
@@ -367,21 +448,87 @@ function skip() {
   next();
 }
 
+// ---------- Fill-ins (v1.3) ----------
+// Endless round: questions come a few at a time and more are fetched while he answers. Every kind asked this session
+// is excluded from later fetches, so a skipped (or still-uploading) kind isn't asked twice. Done ends it any time.
+let fq = [], fAsked = new Set(), fCount = 0, fRemaining = 1, fFetching = null, fCur = null;
+function fillIn() {
+  mode = "fill"; fq = []; fAsked = new Set(); fRemaining = 1; fCur = null;
+  fCount = menuData?.fill_in?.count ?? 0;
+  $("q-title").textContent = "Fill in"; $("q-done-row").style.display = "";
+  show("s-q"); $("q-text").textContent = "Writing your questions…"; $("q-scale").style.display = "none";
+  $("q-voice").style.display = "none"; $("q-typing").style.display = "none"; showCount();
+  fetchFill().then(() => nextFill(true));
+}
+function fetchFill() {
+  fFetching ??= (async () => {
+    try {
+      const d = await get(`?fill_in=true&n=3&exclude=${encodeURIComponent([...fAsked, ...fq.map((q) => q.kind)].join(","))}`);
+      for (const q of d.questions ?? []) if (!fAsked.has(q.kind) && !fq.some((x) => x.kind === q.kind)) fq.push(q);
+      fRemaining = d.remaining ?? 0;
+    } catch { fRemaining = 0; }
+    finally { fFetching = null; }
+  })();
+  return fFetching;
+}
+async function nextFill(first = false) {
+  if (!first && fCur) fAsked.add(fCur.kind);
+  fCur = null;
+  if (!fq.length && fFetching) { $("q-text").textContent = "…"; hideInputs(); await fFetching; }
+  if (!fq.length && fRemaining > 0) { $("q-text").textContent = "…"; hideInputs(); await fetchFill(); }
+  if (!fq.length) return fillDone(fAsked.size ? "That's everything for now." : "Nothing to fill in right now.");
+  fCur = fq.shift(); fAsked.add(fCur.kind);
+  if (fq.length < 2 && fRemaining > 0) fetchFill();  // keep a question ready while he answers
+  $("q-text").classList.add("fade");
+  setTimeout(() => { renderFill(); $("q-text").classList.remove("fade"); }, 180);
+}
+function hideInputs() { $("q-scale").style.display = "none"; $("q-voice").style.display = "none"; $("q-typing").style.display = "none"; }
+function renderFill() {
+  if (!fCur) return;
+  $("q-text").textContent = fCur.question;
+  showCount();
+  if (fCur.scale) {
+    $("q-scale-row").innerHTML = [1, 2, 3, 4, 5].map((n) => `<button data-n="${n}">${n}</button>`).join("");
+    scaleMode();
+  } else voiceMode();
+}
+function showCount() { $("q-dots").innerHTML = `<span class="count">${fCount} today</span>`; }
+function fillBase() { return { fill: fCur.kind, about: fCur.about, question: fCur.question, at: new Date().toISOString() }; }
+function answered() { if (mode === "fill") { fCount++; showCount(); } }
+async function tapScale(e) {
+  const n = Number(e.target.dataset?.n); if (!n || !fCur) return;
+  e.target.classList.add("on");
+  await outboxAdd({ kind: "fill", ...fillBase(), value: n }); flush(); answered();
+  setTimeout(() => nextFill(), 150);
+}
+async function fillDone(note) {
+  if (rec?.state === "recording") { rec.onstop = null; rec.stop(); clearInterval(timer); $("q-rec").classList.remove("on"); }
+  mode = "reflect"; $("q-done-row").style.display = "none";
+  await Promise.race([flush(), sleep(8000)]);
+  menu(note);
+}
+
 // ---------- Wiring ----------
-$("pw-save").onclick = () => { const v = $("pw").value.trim(); if (v) { localStorage.setItem("reflection_token", v); $("pw").value = ""; load(); } };
+$("pw-save").onclick = () => { const v = $("pw").value.trim(); if (v) { localStorage.setItem("reflection_token", v); $("pw").value = ""; menu(); } };
 $("choose-start").onclick = begin;
 $("sc-next").onclick = scoresDone;
 $("sc-skip").onclick = start;
 $("cmp-next").onclick = start;
 $("choose-nightly").onclick = () => load(true);
+$("q-scale-row").onclick = tapScale;
+$("q-speak").onclick = voiceMode;
+$("q-type3").onclick = typeMode;
+$("q-skip3").onclick = skip;
+$("q-done").onclick = () => fillDone(`${fCount} filled in today.`);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && $("s-menu").classList.contains("on")) menu(); });
 $("q-rec").onclick = toggleRec;
 $("q-type").onclick = typeMode;
-$("q-voice-back").onclick = voiceMode;
+$("q-voice-back").onclick = () => (mode === "fill" && fCur?.scale ? scaleMode() : voiceMode());
 $("q-skip").onclick = skip;
 $("q-skip2").onclick = skip;
 $("q-send").onclick = sendTyped;
 window.addEventListener("online", flush);
-load();
+menu();
 </script>
 </body>
 </html>
